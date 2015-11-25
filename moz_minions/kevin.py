@@ -1,4 +1,5 @@
 __author__ = 'shako'
+import re
 import os
 import copy
 import json
@@ -8,6 +9,7 @@ import psutil
 import commands
 import datetime
 import tempfile
+import subprocess
 
 from minions import Minion
 
@@ -177,6 +179,31 @@ class MtbfToRaptorMinion(Minion):
                 return True
         return False
 
+    def remove_exist_lock_file(self, serial_no):
+        lock_file_path = os.path.join("/tmp/LOCKS", serial_no + ".lock")
+        if os.path.exists(lock_file_path):
+            os.remove(lock_file_path)
+
+    def exec_process(self, cmd_list):
+        proc = subprocess.Popen(cmd_list, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        output = proc.communicate()[0]
+        if proc.stdin:
+            proc.stdin.close()
+        if proc.stdout:
+            proc.stdout.close()
+        if proc.stderr:
+            proc.stderr.close()
+        return output
+
+    def remove_adb_forward_list(self, serial_no):
+        forward_list = self.exec_process(['/usr/bin/adb', 'forward', '--list']).splitlines()
+        for out in forward_list:
+            search_serial = re.search('\w+', out)
+            if search_serial and search_serial.group(0) == serial_no:
+                logging.info("found " + serial_no + " in adb forward list")
+                tcp_port = int(re.search(' tcp:(\d+) ', out).group(1))
+                os.system("ADNDROID_SERIAL=" + self.serial + " adb forward --remove tcp:" + str(tcp_port))
+
     def _work(self):
         # check process exist, if exist, store the running time in tmp file,
         if self.check_process_exist():
@@ -194,6 +221,10 @@ class MtbfToRaptorMinion(Minion):
             if os.path.exists(self.path):
                 os.remove(self.path)
                 logging.info("conf file [%s] removed! " % self.path)
+
+                #add lockfile checking and forward list checking, remove when founded...
+                self.remove_exist_lock_file(self.serial)
+                self.remove_adb_forward_list(self.serial)
 
     def onstop(self):
         # submit the running time and data to raptor
